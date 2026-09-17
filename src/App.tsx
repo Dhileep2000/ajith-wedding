@@ -4,6 +4,9 @@ import { Calendar, Clock, MapPin, Navigation, Heart, HeartOff, Send, User, Users
 import ScrollSequence from './components/experience/ImageSequence';
 import { weddingConfig } from './config/weddingConfig';
 import { getGoogleCalendarUrl, downloadICSFile } from './utils/calendarUtils';
+// Speed Insights for Vercel:
+// Note: In Vite/React apps, use '@vercel/speed-insights/react'. Next.js apps use '@vercel/speed-insights/next'.
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 /* ────────────────────────────────────────────────────────────
    Shared animation variants
@@ -132,6 +135,9 @@ export default function App() {
 
       {/* ─── Footer ─── */}
       <FooterSection />
+
+      {/* ─── Vercel Speed Insights (Tracks real-world mobile & desktop performance) ─── */}
+      <SpeedInsights />
     </div>
   );
 }

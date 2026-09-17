@@ -1,6 +1,8 @@
 import { useRef, useEffect, useCallback, memo } from 'react';
 
-const BATCH_SIZE = 5;
+// Forward-biased preloading: on scroll, users scroll forward 90% of the time
+const FORWARD_BATCH = 6;
+const BACKWARD_BATCH = 2;
 
 interface ScrollSequenceProps {
   /** Image folder path under /images/ */
@@ -26,14 +28,14 @@ function getImagePath(folder: string, index: number): string {
 }
 
 /**
- * Reusable high-performance scroll-driven image sequence.
+ * Mobile-optimized, 60fps+ scroll-driven image sequence.
  *
- * - Canvas-based rendering for GPU-accelerated display.
- * - Lazy-loads only the current frame + small neighbor buffer on demand.
- * - Each image load is independent; failures show nearest cached frame.
- * - Never blocks page content below — all loading is async and non-blocking.
- * - IntersectionObserver to pause work when off-screen.
- * - Optional `deferLoad` to delay all loading until visible (for strict ordering).
+ * Performance enhancements:
+ * - DPR capped to max 2 on mobile (prevents 3x/4x Retina memory churn & jank).
+ * - Canvas dimensions cached on resize; zero DOM layout thrashing in scroll loop.
+ * - Hardware accelerated compositing (transform: translate3d).
+ * - Forward-biased async image preloading with decoding: async.
+ * - Dynamic viewport height support (100dvh / 100vh) for mobile address bars.
  */
 const ScrollSequence = memo(function ScrollSequence({
   folder,
@@ -56,21 +58,40 @@ const ScrollSequence = memo(function ScrollSequence({
   const activatedRef = useRef(!deferLoad);
   const completeFiredRef = useRef(false);
 
-  // Draw image to canvas
-  const drawToCanvas = useCallback((img: HTMLImageElement) => {
+  // Cached canvas rendering dimensions to avoid getBoundingClientRect layout thrashing
+  const dimensionsRef = useRef<{ w: number; h: number; dpr: number }>({ w: 0, h: 0, dpr: 1 });
+
+  // Update cached dimensions on resize
+  const updateDimensions = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
+    // Cap DPR at 2.0 to prevent mobile GPUs from choking on 3x/4x screens
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rect = canvas.getBoundingClientRect();
-    const w = rect.width * dpr;
-    const h = rect.height * dpr;
-    if (canvas.width !== w || canvas.height !== h) {
+    const w = Math.round(rect.width * dpr);
+    const h = Math.round(rect.height * dpr);
+
+    dimensionsRef.current = { w, h, dpr };
+    if (w > 0 && h > 0 && (canvas.width !== w || canvas.height !== h)) {
       canvas.width = w;
       canvas.height = h;
     }
+  }, []);
+
+  // Draw image to canvas with cover fit
+  const drawToCanvas = useCallback((img: HTMLImageElement) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) return;
+
+    let { w, h } = dimensionsRef.current;
+    if (w === 0 || h === 0) {
+      updateDimensions();
+      w = dimensionsRef.current.w;
+      h = dimensionsRef.current.h;
+    }
+    if (w === 0 || h === 0) return;
 
     // Draw with cover-fit
     const imgRatio = img.naturalWidth / img.naturalHeight;
@@ -84,9 +105,9 @@ const ScrollSequence = memo(function ScrollSequence({
       sy = (img.naturalHeight - sh) / 2;
     }
     ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
-  }, []);
+  }, [updateDimensions]);
 
-  // Load a single image — fully isolated, never throws
+  // Load single image with asynchronous decoding
   const loadImage = useCallback((frame: number): Promise<HTMLImageElement | null> => {
     return new Promise((resolve) => {
       const cached = cacheRef.current.get(frame);
@@ -104,9 +125,21 @@ const ScrollSequence = memo(function ScrollSequence({
       img.decoding = 'async';
       img.src = getImagePath(folder, frame);
       img.onload = () => {
-        cacheRef.current.set(frame, img);
-        loadingRef.current.delete(frame);
-        resolve(img);
+        if ('decode' in img) {
+          img.decode().then(() => {
+            cacheRef.current.set(frame, img);
+            loadingRef.current.delete(frame);
+            resolve(img);
+          }).catch(() => {
+            cacheRef.current.set(frame, img);
+            loadingRef.current.delete(frame);
+            resolve(img);
+          });
+        } else {
+          cacheRef.current.set(frame, img);
+          loadingRef.current.delete(frame);
+          resolve(img);
+        }
       };
       img.onerror = () => {
         loadingRef.current.delete(frame);
@@ -115,16 +148,18 @@ const ScrollSequence = memo(function ScrollSequence({
     });
   }, [folder]);
 
-  // Background-preload neighbors in small batches
+  // Forward-biased neighbor preloading
   const preloadNeighbors = useCallback(
     (center: number) => {
       if (!activatedRef.current) return;
       clearTimeout(idleTimerRef.current);
       idleTimerRef.current = setTimeout(() => {
         const offsets: number[] = [];
-        for (let i = 1; i <= BATCH_SIZE; i++) {
-          offsets.push(i, -i);
-        }
+        // Prioritize frames ahead (direction of scroll)
+        for (let i = 1; i <= FORWARD_BATCH; i++) offsets.push(i);
+        // Then frames behind
+        for (let i = 1; i <= BACKWARD_BATCH; i++) offsets.push(-i);
+
         let idx = 0;
         const loadNext = () => {
           if (idx >= offsets.length || !isVisibleRef.current) return;
@@ -132,14 +167,15 @@ const ScrollSequence = memo(function ScrollSequence({
           idx++;
           if (frame >= startFrame && frame <= endFrame && !cacheRef.current.has(frame)) {
             loadImage(frame).then(() => {
-              setTimeout(loadNext, 20);
+              // Smooth small delay to avoid micro-stutter
+              setTimeout(loadNext, 16);
             });
           } else {
             loadNext();
           }
         };
         loadNext();
-      }, 80);
+      }, 50);
     },
     [loadImage, startFrame, endFrame]
   );
@@ -162,7 +198,7 @@ const ScrollSequence = memo(function ScrollSequence({
           }
         });
         // Show nearest available frame as fallback
-        for (let d = 1; d <= 10; d++) {
+        for (let d = 1; d <= 12; d++) {
           for (const sign of [1, -1]) {
             const alt = frame + d * sign;
             const altImg = cacheRef.current.get(alt);
@@ -184,10 +220,9 @@ const ScrollSequence = memo(function ScrollSequence({
     const observer = new IntersectionObserver(
       ([entry]) => {
         isVisibleRef.current = entry.isIntersecting;
-        // Activate deferred component the first time it becomes visible
         if (entry.isIntersecting && !activatedRef.current) {
           activatedRef.current = true;
-          // Load the first frame immediately
+          updateDimensions();
           loadImage(startFrame).then((img) => {
             if (img) {
               drawnFrameRef.current = startFrame;
@@ -197,15 +232,16 @@ const ScrollSequence = memo(function ScrollSequence({
           preloadNeighbors(startFrame);
         }
       },
-      { threshold: 0, rootMargin: '200px' }
+      { threshold: 0, rootMargin: '300px' }
     );
     observer.observe(container);
     return () => observer.disconnect();
-  }, [loadImage, preloadNeighbors, drawToCanvas, startFrame]);
+  }, [loadImage, preloadNeighbors, drawToCanvas, updateDimensions, startFrame]);
 
-  // Load the first frame on mount (only if not deferred)
+  // Initial load when not deferred
   useEffect(() => {
     if (deferLoad) return;
+    updateDimensions();
     loadImage(startFrame).then((img) => {
       if (img) {
         drawnFrameRef.current = startFrame;
@@ -213,9 +249,9 @@ const ScrollSequence = memo(function ScrollSequence({
       }
     });
     preloadNeighbors(startFrame);
-  }, [deferLoad, loadImage, preloadNeighbors, drawToCanvas, startFrame]);
+  }, [deferLoad, loadImage, preloadNeighbors, drawToCanvas, updateDimensions, startFrame]);
 
-  // Scroll handler — maps scroll position to frame number
+  // High-performance scroll listener
   useEffect(() => {
     let ticking = false;
 
@@ -243,7 +279,7 @@ const ScrollSequence = memo(function ScrollSequence({
           preloadNeighbors(clamped);
         }
 
-        // Fire onComplete when scroll reaches the end
+        // Fire onComplete callback
         if (onComplete && progress >= 0.98 && !completeFiredRef.current) {
           completeFiredRef.current = true;
           onComplete();
@@ -256,23 +292,32 @@ const ScrollSequence = memo(function ScrollSequence({
     return () => window.removeEventListener('scroll', handleScroll);
   }, [showFrame, preloadNeighbors, startFrame, endFrame, totalFrames, onComplete]);
 
-  // Handle resize
+  // Handle window resize & orientation change
   useEffect(() => {
     const handleResize = () => {
+      updateDimensions();
       const frame = currentFrameRef.current;
       const cached = cacheRef.current.get(frame);
       if (cached && cached.complete && cached.naturalWidth > 0) {
         drawToCanvas(cached);
       }
     };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [drawToCanvas]);
+    window.addEventListener('resize', handleResize, { passive: true });
+    window.addEventListener('orientationchange', handleResize, { passive: true });
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
+  }, [drawToCanvas, updateDimensions]);
 
   return (
     <div
       ref={containerRef}
-      style={{ height: `${scrollHeight}vh`, position: 'relative' }}
+      style={{
+        height: `${scrollHeight}vh`,
+        position: 'relative',
+        contain: 'paint layout',
+      }}
     >
       <div
         style={{
@@ -280,11 +325,17 @@ const ScrollSequence = memo(function ScrollSequence({
           top: 0,
           width: '100%',
           height: '100vh',
+          minHeight: '100dvh',
           overflow: 'hidden',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           background: bgColor,
+          transform: 'translate3d(0, 0, 0)',
+          WebkitTransform: 'translate3d(0, 0, 0)',
+          backfaceVisibility: 'hidden',
+          WebkitBackfaceVisibility: 'hidden',
+          willChange: 'transform',
         }}
       >
         <canvas
@@ -293,6 +344,7 @@ const ScrollSequence = memo(function ScrollSequence({
             width: '100%',
             height: '100%',
             display: 'block',
+            touchAction: 'pan-y',
           }}
         />
       </div>
@@ -301,3 +353,4 @@ const ScrollSequence = memo(function ScrollSequence({
 });
 
 export default ScrollSequence;
+
