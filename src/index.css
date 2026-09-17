@@ -1,0 +1,117 @@
+/* ── Google Fonts ─────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Inter:wght@300;400;500;600&display=swap');
+
+@import 'tailwindcss';
+
+/* ── Design Tokens ────────────────────────────────────────── */
+@theme {
+  --color-ivory: #FAF6F0;
+  --color-cream: #F5E6D0;
+  --color-champagne: #D4A574;
+  --color-deep-gold: #8B6914;
+  --color-warm-charcoal: #2D2A26;
+  --color-rich-black: #1A1714;
+  --color-soft-blush: #E8D5C4;
+  --color-muted-rose: #C4A882;
+  --color-gold-shimmer: #C9A84C;
+
+  --font-serif: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* ── Base ──────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #ffffff;
+  color: var(--color-warm-charcoal);
+  overflow-x: hidden;
+  line-height: 1.6;
+}
+
+/* ── Selection ─────────────────────────────────────────────── */
+::selection {
+  background-color: rgba(212, 165, 116, 0.2);
+  color: var(--color-warm-charcoal);
+}
+
+/* ── Scrollbar — elegant thin style ────────────────────────── */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: #ffffff;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-champagne);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-deep-gold);
+}
+
+/* ── Fonts ──────────────────────────────────────────────────── */
+.font-serif {
+  font-family: var(--font-serif);
+}
+
+.font-sans {
+  font-family: var(--font-sans);
+}
+
+/* ── Focus styles ──────────────────────────────────────────── */
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: rgba(212, 165, 116, 0.5) !important;
+  box-shadow: 0 0 0 3px rgba(212, 165, 116, 0.08);
+}
+
+/* ── Select appearance ─────────────────────────────────────── */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23D4A574' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px !important;
+}
+
+/* ── Smooth transitions for buttons on hover ───────────────── */
+button,
+a {
+  transition: all 0.3s ease;
+}
+
+button:hover,
+a:hover {
+  border-color: rgba(212, 165, 116, 0.6) !important;
+}
+
+/* ── Reduced motion ────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
